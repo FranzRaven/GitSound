@@ -1,0 +1,160 @@
+//Sampler granular básico con interfaz GUI
+
+(
+s.options.numInputBusChannels  = 2;
+s.options.numOutputBusChannels = 2;
+
+s.waitForBoot {
+
+    var bufDur    = 4.0;
+    var buf       = Buffer.alloc(s, (s.sampleRate * bufDur).round.asInteger, 1);
+    var recSynth;
+    var granSynth;
+    var frozen    = false;
+    var paramDefs;
+
+    SynthDef(\granRec, { |bufnum = 0, in = 0|
+        var sig   = SoundIn.ar(in);
+        var phase = Phasor.ar(0, BufRateScale.kr(bufnum), 0, BufFrames.kr(bufnum));
+        BufWr.ar(sig, bufnum, phase);
+    }).add;
+
+    SynthDef(\granEngine, {
+        |bufnum = 0, in = 0,
+         pos       = 0.5,
+         grainDur  = 0.1,
+         density   = 10,
+         posSpread = 0.05,
+         pitSpread = 0.0,
+         amp       = 0.8,
+         dryWet    = 1.0|
+
+        var dry     = SoundIn.ar(in);
+        var trig    = Impulse.ar(density);
+        var readPos = (pos + LFNoise1.ar(density, posSpread)).wrap(0.0, 1.0);
+        var wet     = TGrains.ar(
+            numChannels: 2,
+            trigger:     trig,
+            bufnum:      bufnum,
+            rate:        1.0 + LFNoise0.ar(density, pitSpread),
+            centerPos:   readPos * BufDur.kr(bufnum),
+            dur:         grainDur,
+            pan:         LFNoise0.ar(density, 0.3),
+            amp:         amp,
+            interp:      2
+        );
+        Out.ar(0, (dry * (1 - dryWet)) + (wet * dryWet));
+    }).add;
+
+    s.sync;
+
+    recSynth  = Synth(\granRec,    [\bufnum, buf]);
+    granSynth = Synth(\granEngine, [\bufnum, buf]);
+
+    paramDefs = [
+        [\pos,       "Posición",         ControlSpec(0.0,  1.0,  \lin, 0.001), 0.5 ],
+        [\grainDur,  "Tamaño de grano",  ControlSpec(0.01, 0.7,  \exp, 0.001), 0.1 ],
+        [\density,   "Densidad (g/s)",   ControlSpec(1.0,  80.0, \exp, 0.1),   10.0],
+        [\posSpread, "Dispersión pos",   ControlSpec(0.0,  0.5,  \lin, 0.001), 0.05],
+        [\pitSpread, "Dispersión pitch", ControlSpec(0.0,  0.9,  \lin, 0.001), 0.0 ],
+        [\amp,       "Amplitud",         ControlSpec(0.0,  1.0,  \lin, 0.01),  0.8 ],
+        [\dryWet,    "Wet / Dry",        ControlSpec(0.0,  1.0,  \lin, 0.01),  1.0 ],
+    ];
+
+    // ---- toda la GUI dentro de .defer ----
+    {
+        var win, vl, freezeBtn, scope;
+
+        win = Window("Sinte Granular", Rect(200, 100, 460, 480))
+            .background_(Color.black)
+            .front;
+
+        vl = VLayout();
+        win.layout_(vl);
+
+        vl.add(
+            StaticText()
+                .string_("◈  Sinte Granular  ◈")
+                .stringColor_(Color.cyan)
+                .font_(Font("Monaco", 15, true))
+                .align_(\center)
+        );
+
+        paramDefs.do { |def|
+            var key      = def[0];
+            var label    = def[1];
+            var spec     = def[2];
+            var init     = def[3];
+            var valLabel = StaticText()
+                .string_(init.round(0.001).asString)
+                .stringColor_(Color.cyan)
+                .fixedWidth_(58)
+                .align_(\right);
+            var sl = Slider()
+                .value_(spec.unmap(init))
+                .background_(Color.gray(0.2))
+                .action_({ |sl|           // <-- ya no sombrea 's'
+                    var v = spec.map(sl.value);
+                    valLabel.string_(v.round(0.001).asString);
+                    granSynth.set(key, v);
+                });
+            var nameLabel = StaticText()
+                .string_(label)
+                .stringColor_(Color.white)
+                .fixedWidth_(135)
+                .align_(\right);
+
+            vl.add(HLayout(nameLabel, sl, valLabel));
+        };
+
+        freezeBtn = Button()
+            .states_([
+                ["  ▶  GRABANDO", Color.white, Color.gray(0.25)],
+                ["  ■  PROCESANDO",   Color.black, Color.cyan]
+            ])
+            .fixedHeight_(36)
+            .action_({ |btn|
+                frozen = (btn.value == 1);
+                if (frozen)
+                    { recSynth.free }
+                    { recSynth = Synth(\granRec, [\bufnum, buf]) };
+            });
+        vl.add(freezeBtn);
+
+        vl.add(
+            StaticText()
+                .string_("— buffer —")
+                .stringColor_(Color.gray(0.45))
+                .align_(\center)
+        );
+
+        scope = ScopeView()
+            .background_(Color.black)
+            .waveColors_([Color.cyan])
+            .fixedHeight_(90);
+        vl.add(scope);
+        scope.bufnum_(buf.bufnum);
+
+        vl.add(
+            Button()
+                .states_([["  cerrar y liberar", Color.white, Color.gray(0.3)]])
+                .fixedHeight_(30)
+                .action_({
+                    recSynth.free;
+                    granSynth.free;
+                    buf.free;
+                    win.close;
+                })
+        );
+
+        win.onClose_({
+            recSynth.free;
+            granSynth.free;
+            buf.free;
+        });
+
+    }.defer;   // <-- clave: ejecuta en el hilo principal
+};
+)
+
+

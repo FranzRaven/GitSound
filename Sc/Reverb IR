@@ -1,0 +1,25 @@
+(
+~irBuffer = Buffer.read(s, "Tu/Archivo/de/audio.wav"); // Para que el entorno reconozca el archivo, cambia "\" por "/"
+
+SynthDef(\liveConvReverb, {
+    |out=0, in=0, dry=0.5, wet=0.5, amp=1.0|
+
+    var input, convSig;
+
+    // Tomar audio de la entrada (fuente de audio externa a procesar)
+    input = SoundIn.ar(in);
+
+    // Aplicar convolución
+    convSig = PartConv.ar(input, 512, ~irBuffer);
+
+    Out.ar(out, (input * dry + (convSig * wet)) * amp ! 2);
+}).add;
+)
+
+~liveReverb = Synth(\liveConvReverb, [\in, 0, \dry, 0.4, \wet, 0.7]);
+
+// Ajustar mix en vivo:
+~liveReverb.set(\wet, 0.9);
+~liveReverb.set(\dry, 0.2);
+
+~liveReverb.free;
